@@ -123,17 +123,27 @@ SCOPES = ["Mail.Read"]  # MSAL adds offline_access itself
 GRAPH_MESSAGES = "https://graph.microsoft.com/v1.0/me/messages"
 
 
-def get_token() -> str:
+class LoginRequired(RuntimeError):
+    """No usable cached sign-in; a human has to run ``python -m jobscout login`` once."""
+
+
+def get_token(interactive: bool = False) -> str:
     """Get a Microsoft Graph access token for the user's mailbox.
 
-    Uses the cached refresh token when possible. Otherwise prints a device code
-    and blocks until the user signs in. Reads ``MS_CLIENT_ID`` and ``MS_AUTHORITY``
-    from the environment.
+    Uses the cached refresh token silently when possible. The refresh token renews
+    itself on each use and only expires after ~90 days without a run, a password
+    change, or revoked consent. Reads ``MS_CLIENT_ID`` and ``MS_AUTHORITY`` from
+    the environment.
+
+    Args:
+        interactive: If no cached sign-in works, print a device code and block until
+            the user signs in. Leave False for unattended runs, so they fail fast.
 
     Returns:
         A bearer token with the Mail.Read scope.
 
     Raises:
+        LoginRequired: If not interactive and there is no usable cached sign-in.
         RuntimeError: If the device flow cannot start or the sign-in fails.
     """
     cache = msal.SerializableTokenCache()
@@ -150,6 +160,8 @@ def get_token() -> str:
     if accounts := app.get_accounts():
         result = app.acquire_token_silent(SCOPES, account=accounts[0])
     if not result:
+        if not interactive:
+            raise LoginRequired("Outlook sign-in needed: run `python -m jobscout login` once")
         flow = app.initiate_device_flow(SCOPES)
         if "user_code" not in flow:
             raise RuntimeError(f"Device flow failed: {flow.get('error_description')}")
@@ -171,7 +183,8 @@ class GraphSource:
 
         Args:
             days: How far back to look, by received date.
-            token_provider: Returns a Graph bearer token; defaults to interactive sign-in.
+            token_provider: Returns a Graph bearer token; defaults to the cached sign-in
+                (raises LoginRequired if there is none).
         """
         self.days = days
         self.token_provider = token_provider

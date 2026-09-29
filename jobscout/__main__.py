@@ -2,6 +2,7 @@
 
 Usage::
 
+    python -m jobscout login                 one-time Outlook sign-in (device code)
     python -m jobscout run [--batch] [--limit N] [--days D] [--model M]   whole pipeline
     python -m jobscout fetch [--days D]      pull alert emails from Outlook
     python -m jobscout jobs                  list known jobs and their state
@@ -12,27 +13,44 @@ Usage::
 """
 
 import argparse
+import sys
 from datetime import UTC, datetime
 
 from jobscout.config import DATA_DIR, setup
 from jobscout.enrich import MAX_REQUESTS_PER_RUN, enrich
 from jobscout.report import ranked, render_report
 from jobscout.score import DEFAULT_MODEL, MODELS, Scorer, ScoreRun, make_client
-from jobscout.sources import GraphSource
+from jobscout.sources import GraphSource, LoginRequired, get_token
 from jobscout.store import JobStore
 
 REPORT = DATA_DIR / "report.md"
 
 
-def cmd_fetch(store: JobStore, days: int) -> None:
+def cmd_login() -> None:
+    """Sign in to Outlook interactively and cache the refresh token for unattended runs."""
+    get_token(interactive=True)
+    print("Signed in. Later runs reuse the cached token without asking.")
+
+
+def cmd_fetch(store: JobStore, days: int) -> bool:
     """Save new alert emails from Outlook into the store.
+
+    Never prompts for sign-in, so it is safe to run unattended.
 
     Args:
         store: Where alerts are saved.
         days: How far back to look.
+
+    Returns:
+        False if Outlook sign-in is needed, True otherwise.
     """
-    new = sum(store.add_alert(a) for a in GraphSource(days).alerts())
+    try:
+        new = sum(store.add_alert(a) for a in GraphSource(days).alerts())
+    except LoginRequired as e:
+        print(f"  ! {e}", file=sys.stderr)
+        return False
     print(f"{new} new alert emails")
+    return True
 
 
 def cmd_jobs(store: JobStore) -> None:
@@ -158,6 +176,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="jobscout")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    sub.add_parser("login")
     run_p = sub.add_parser("run")
     fetch_p = sub.add_parser("fetch")
     sub.add_parser("jobs")
@@ -179,8 +198,11 @@ def main() -> None:
 
     store = JobStore()
     match args.cmd:
+        case "login":
+            cmd_login()
         case "fetch":
-            cmd_fetch(store, args.days)
+            if not cmd_fetch(store, args.days):
+                sys.exit(1)
         case "jobs":
             cmd_jobs(store)
         case "enrich":
@@ -193,13 +215,15 @@ def main() -> None:
             cmd_report(store)
         case "run":
             print("1/4 fetch")
-            cmd_fetch(store, args.days)
+            fetched = cmd_fetch(store, args.days)  # on failure, carry on with stored alerts
             print("2/4 enrich")
             cmd_enrich(store, MAX_REQUESTS_PER_RUN)
             print("3/4 score")
             cmd_score(store, args.batch, args.limit, args.model)
             print("4/4 report")
             cmd_report(store)
+            if not fetched:
+                sys.exit(1)  # non-zero so a scheduler flags the missing sign-in
 
 
 if __name__ == "__main__":
