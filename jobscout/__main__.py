@@ -20,7 +20,7 @@ from jobscout.config import DATA_DIR, setup
 from jobscout.enrich import MAX_REQUESTS_PER_RUN, enrich
 from jobscout.report import ranked, render_report
 from jobscout.score import DEFAULT_MODEL, MODELS, Scorer, ScoreRun, make_client
-from jobscout.sources import GraphSource, LoginRequired, get_token
+from jobscout.sources import AlertSourceError, GraphSource, LoginRequired, get_token
 from jobscout.store import JobStore
 
 REPORT = DATA_DIR / "report.md"
@@ -35,18 +35,19 @@ def cmd_login() -> None:
 def cmd_fetch(store: JobStore, days: int) -> bool:
     """Save new alert emails from Outlook into the store.
 
-    Never prompts for sign-in, so it is safe to run unattended.
+    Never prompts for sign-in, so it is safe to run unattended. Alerts saved before
+    a failure are kept.
 
     Args:
         store: Where alerts are saved.
         days: How far back to look.
 
     Returns:
-        False if Outlook sign-in is needed, True otherwise.
+        False if Outlook sign-in is needed or the mailbox could not be read, True otherwise.
     """
     try:
         new = sum(store.add_alert(a) for a in GraphSource(days).alerts())
-    except LoginRequired as e:
+    except (LoginRequired, AlertSourceError) as e:
         print(f"  ! {e}", file=sys.stderr)
         return False
     print(f"{new} new alert emails")
@@ -223,7 +224,7 @@ def main() -> None:
             print("4/4 report")
             cmd_report(store)
             if not fetched:
-                sys.exit(1)  # non-zero so a scheduler flags the missing sign-in
+                sys.exit(1)  # non-zero so a scheduler flags a missing sign-in or failed fetch
 
 
 if __name__ == "__main__":

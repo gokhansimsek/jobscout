@@ -78,8 +78,9 @@ python -m jobscout run --batch         # same, scoring via the Batch API (50% of
 
 Models: `claude-sonnet-5-5` (default) or `claude-haiku-4-5`. Each run prints token usage and cost.
 
-`fetch` and `run` exit with code 1 when the Outlook sign-in has expired, so a scheduler can flag it;
-`run` still carries on with already-stored alerts. Run `login` again to fix it.
+`fetch` and `run` exit with code 1 when the Outlook sign-in has expired or the mailbox can't be read
+(network error, Graph error, persistent throttling), so a scheduler can flag it; `run` still carries on
+with already-stored alerts. For an expired sign-in, run `login` again.
 
 ### Without Outlook
 

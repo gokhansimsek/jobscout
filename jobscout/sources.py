@@ -4,7 +4,7 @@ Interface: any object with ``alerts() -> Iterable[Alert]``.
 
 Adapters:
     FolderSource: .eml / .msg / .html files on disk (the Job store's inbox, manual samples).
-    GraphSource: Outlook.com via Microsoft Graph (first use prints a device code to sign in).
+    GraphSource: Outlook.com via Microsoft Graph (sign in once with ``python -m jobscout login``).
 """
 
 import email
@@ -123,8 +123,20 @@ SCOPES = ["Mail.Read"]  # MSAL adds offline_access itself
 GRAPH_MESSAGES = "https://graph.microsoft.com/v1.0/me/messages"
 
 
+MAX_GRAPH_ATTEMPTS = 5
+
+# (url, params) -> (status, retry_after_seconds, page). page is the decoded JSON body
+# for 2xx and {} otherwise; retry_after is only set for 429. Raises AlertSourceError
+# on network failure.
+GraphGetter = Callable[[str, dict[str, str] | None], tuple[int, int | None, dict]]
+
+
 class LoginRequired(RuntimeError):
     """No usable cached sign-in; a human has to run ``python -m jobscout login`` once."""
+
+
+class AlertSourceError(RuntimeError):
+    """The mailbox could not be read (network, Graph error, throttling). Stored alerts still work."""
 
 
 def get_token(interactive: bool = False) -> str:
@@ -175,19 +187,71 @@ def get_token(interactive: bool = False) -> str:
     return result["access_token"]
 
 
+def graph_getter(token_provider: Callable[[], str] = get_token) -> GraphGetter:
+    """Build the production Graph getter: one signed-in requests session.
+
+    Args:
+        token_provider: Returns a Graph bearer token; defaults to the cached sign-in.
+
+    Returns:
+        A function that GETs one Graph page.
+
+    Raises:
+        LoginRequired: If there is no usable cached sign-in.
+    """
+    session = requests.Session()
+    session.headers.update(
+        {
+            "Authorization": f"Bearer {token_provider()}",
+            "Prefer": 'outlook.body-content-type="html"',
+        }
+    )
+
+    def get(url: str, params: dict[str, str] | None) -> tuple[int, int | None, dict]:
+        """GET one Graph page.
+
+        Args:
+            url: Page URL.
+            params: Query parameters, or None when the URL already has them.
+
+        Returns:
+            The HTTP status, the Retry-After seconds for a 429, and the decoded page.
+
+        Raises:
+            AlertSourceError: On any network-level failure.
+        """
+        try:
+            resp = session.get(url, params=params, timeout=30)
+        except requests.RequestException as e:
+            raise AlertSourceError(f"Graph unreachable: {e}") from e
+        retry_after = (
+            int(resp.headers.get("Retry-After", "10")) if resp.status_code == 429 else None
+        )
+        return resp.status_code, retry_after, resp.json() if resp.ok else {}
+
+    return get
+
+
 class GraphSource:
     """Alert emails from an Outlook.com mailbox, read through Microsoft Graph."""
 
-    def __init__(self, days: int = 14, token_provider: Callable[[], str] = get_token):
+    def __init__(
+        self,
+        days: int = 14,
+        *,
+        get: GraphGetter | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         """Create a source for recent alerts.
 
         Args:
             days: How far back to look, by received date.
-            token_provider: Returns a Graph bearer token; defaults to the cached sign-in
-                (raises LoginRequired if there is none).
+            get: Graph page getter; defaults to one signed in with the cached token.
+            sleep: Called to wait out throttling.
         """
         self.days = days
-        self.token_provider = token_provider
+        self._get = get
+        self._sleep = sleep
 
     def alerts(self) -> Iterator[Alert]:
         """Page through the mailbox for alerts from LinkedIn's job-alert sender.
@@ -197,17 +261,11 @@ class GraphSource:
             not filename-safe itself.
 
         Raises:
-            requests.HTTPError: If Graph returns an error other than throttling.
-            RuntimeError: If Graph keeps throttling.
+            LoginRequired: If there is no usable cached sign-in.
+            AlertSourceError: If Graph is unreachable, returns an error, or keeps throttling.
         """
+        get = self._get or graph_getter()
         since = (datetime.now(UTC) - timedelta(days=self.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        session = requests.Session()
-        session.headers.update(
-            {
-                "Authorization": f"Bearer {self.token_provider()}",
-                "Prefer": 'outlook.body-content-type="html"',
-            }
-        )
         # No $orderby: combined with this $filter Graph can reject it as "InefficientFilter".
         url: str | None = GRAPH_MESSAGES
         params: dict[str, str] | None = {
@@ -217,19 +275,18 @@ class GraphSource:
             "$top": "50",
         }
         while url:
-            page = self._get(session, url, params)
+            page = self._page(get, url, params)
             for msg in page["value"]:
                 alert_id = hashlib.sha1(msg["id"].encode()).hexdigest()[:16]
                 yield Alert(id=alert_id, html=msg["body"]["content"])
             # nextLink already carries the query, so params are dropped after page 1.
             url, params = page.get("@odata.nextLink"), None
 
-    @staticmethod
-    def _get(session: requests.Session, url: str, params: dict[str, str] | None) -> dict:
+    def _page(self, get: GraphGetter, url: str, params: dict[str, str] | None) -> dict:
         """GET a Graph page, waiting out throttling.
 
         Args:
-            session: Session carrying the auth headers.
+            get: Graph page getter.
             url: Page URL.
             params: Query parameters, or None when the URL already has them.
 
@@ -237,14 +294,15 @@ class GraphSource:
             The decoded JSON page.
 
         Raises:
-            requests.HTTPError: On any non-throttling error status.
-            RuntimeError: If Graph still throttles after 5 attempts.
+            AlertSourceError: On an error status, or if Graph still throttles after
+                MAX_GRAPH_ATTEMPTS attempts.
         """
-        for _ in range(5):
-            resp = session.get(url, params=params, timeout=30)
-            if resp.status_code == 429:
-                time.sleep(int(resp.headers.get("Retry-After", "10")))
+        for _ in range(MAX_GRAPH_ATTEMPTS):
+            status, retry_after, page = get(url, params)
+            if status == 429:
+                self._sleep(retry_after or 10)
                 continue
-            resp.raise_for_status()
-            return resp.json()
-        raise RuntimeError("Graph kept throttling (429); try again later")
+            if status >= 400:
+                raise AlertSourceError(f"Graph returned HTTP {status}")
+            return page
+        raise AlertSourceError("Graph kept throttling (429); try again later")
