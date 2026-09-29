@@ -55,18 +55,22 @@ def test_needing_details_and_needing_score(store):
 
 
 def test_records_from_an_older_shape_load_or_count_as_missing(store, tmp_path):
-    store.add_alert(Alert("a", alert_html(*[(i, "T", "C", "L") for i in "123"])))
+    store.add_alert(Alert("a", alert_html(*[(i, "T", "C", "L") for i in "12345"])))
     (tmp_path / "jobs").mkdir()
     (tmp_path / "scores").mkdir()
-    # 1: a field since removed is ignored; 2: a required field is missing; 3: not JSON.
+    # 1: a field since removed is ignored; 2: a required field is missing; 3: not JSON;
+    # 4: JSON but not an object; 5: not UTF-8.
     (tmp_path / "jobs" / "1.json").write_text(
         json.dumps({**details("1").__dict__, "removed_field": "x"}), encoding="utf-8"
     )
     (tmp_path / "jobs" / "2.json").write_text(json.dumps({"job_id": "2"}), encoding="utf-8")
     (tmp_path / "scores" / "3.json").write_text("{truncated", encoding="utf-8")
+    (tmp_path / "scores" / "4.json").write_text("null", encoding="utf-8")
+    (tmp_path / "scores" / "5.json").write_bytes(b"\xff\xfe not utf-8")
 
-    j1, j2, j3 = store.jobs()
+    j1, j2, j3, j4, j5 = store.jobs()
 
     assert j1.details == details("1")
-    assert j2.details is None and [r.job_id for r in store.needing_details()] == ["2", "3"]
-    assert j3.score is None  # scored again
+    assert j2.details is None  # fetched again
+    assert [r.job_id for r in store.needing_details()] == ["2", "3", "4", "5"]
+    assert j3.score is None and j4.score is None and j5.score is None  # scored again

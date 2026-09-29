@@ -145,9 +145,14 @@ class JobStore:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            names = {f.name for f in fields(cls)}
+        except UnicodeDecodeError, json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        names = {f.name for f in fields(cls)}
+        try:
             return cls(**{k: v for k, v in data.items() if k in names})
-        except json.JSONDecodeError, TypeError:
+        except TypeError:  # a required field is missing
             return None
 
     @staticmethod
