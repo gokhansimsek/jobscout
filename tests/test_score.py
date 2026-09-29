@@ -1,9 +1,9 @@
 import dataclasses
 import json
 from types import SimpleNamespace as NS
+from typing import Any, cast
 
 import anthropic
-import httpx2
 import pytest
 
 from jobscout.models import JobDetails, JobScore
@@ -11,9 +11,8 @@ from jobscout.score import SCORE_SCHEMA, Scorer
 
 JOB = JobDetails("1", "Senior Backend", "Acme", "İzmir", "Python, FastAPI, AWS")
 JOB2 = JobDetails("2", "Data Engineer", "Beta", "Remote", "Python, Spark")
-CONNECTION_ERROR = anthropic.APIConnectionError(
-    request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
-)
+# The Scorer only reads the message; the request would need the SDK's own HTTP library.
+CONNECTION_ERROR = anthropic.APIConnectionError(request=cast(Any, None))
 GOOD = {
     "score": 9,
     "verdict": "apply",
@@ -224,3 +223,14 @@ def test_collected_scores_keep_the_hash_they_were_submitted_with():
 
     assert run.scores[0].job_id == "1"
     assert run.scores[0].prompt_hash == submitter.prompt_hash
+
+
+def test_batch_submitted_before_custom_id_carried_the_hash_uses_the_current_one():
+    client = FakeClient(message())
+    client.batch_requests = [{"custom_id": "1"}]  # the old format: bare job id
+    s = scorer(client)
+
+    run = s.collect("batch_1")
+
+    assert run.scores[0].job_id == "1"
+    assert run.scores[0].prompt_hash == s.prompt_hash

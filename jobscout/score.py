@@ -92,6 +92,35 @@ How to judge:
 - Be concise: reasoning is 2-3 sentences for a busy reader deciding whether to open the link."""
 
 
+def _custom_id(job_id: str, prompt_hash: str) -> str:
+    """Build a batch request's custom_id, so collected results keep their prompt hash.
+
+    Args:
+        job_id: The job being scored (digits only).
+        prompt_hash: Hash of the prompt the request is submitted with.
+
+    Returns:
+        ``<job_id>-<prompt_hash>``, within the Batch API's ``[a-zA-Z0-9_-]{1,64}``.
+    """
+    return f"{job_id}-{prompt_hash}"
+
+
+def _split_custom_id(custom_id: str, current_hash: str) -> tuple[str, str]:
+    """Undo ``_custom_id``.
+
+    Args:
+        custom_id: A batch result's custom_id.
+        current_hash: Used for batches submitted before custom_id carried the hash.
+
+    Returns:
+        The job id and the prompt hash the request was submitted with.
+    """
+    job_id, sep, prompt_hash = custom_id.rpartition("-")
+    if not sep:  # an older batch: custom_id is the bare job id
+        return custom_id, current_hash
+    return job_id, prompt_hash
+
+
 def _zero_tokens() -> dict[str, int]:
     """Start a token tally.
 
@@ -231,7 +260,9 @@ class Scorer:
         if batch:
             batch_obj = self._client.messages.batches.create(
                 requests=[
-                    Request(custom_id=f"{job.job_id}-{self.prompt_hash}", params=self._params(job))
+                    Request(
+                        custom_id=_custom_id(job.job_id, self.prompt_hash), params=self._params(job)
+                    )
                     for job in jobs
                 ]
             )
@@ -247,7 +278,7 @@ class Scorer:
                 run.failed.append((job.job_id, str(e)))
                 continue
             run.usage.add(message.usage)
-            self._record(run, job.job_id, message)
+            self._record(run, job.job_id, message, self.prompt_hash)
         return run
 
     def collect(self, batch_id: str) -> ScoreRun:
@@ -266,9 +297,7 @@ class Scorer:
         for result in self._client.messages.batches.results(batch_id):
             # Stamp the hash the batch was submitted with, not the current one: if the
             # CV or rubric changed since, these scores are stale and must stay so.
-            job_id, sep, prompt_hash = result.custom_id.rpartition("-")
-            if not sep:  # submitted before custom_id carried the hash
-                job_id, prompt_hash = result.custom_id, self.prompt_hash
+            job_id, prompt_hash = _split_custom_id(result.custom_id, self.prompt_hash)
             if result.result.type != "succeeded":
                 run.failed.append((job_id, result.result.type))
                 continue
@@ -315,19 +344,17 @@ class Scorer:
             "extra_body": {"fallbacks": "default"},
         }
 
-    def _record(
-        self, run: ScoreRun, job_id: str, message: Message, prompt_hash: str | None = None
-    ) -> None:
+    def _record(self, run: ScoreRun, job_id: str, message: Message, prompt_hash: str) -> None:
         """Add a response to the run as a score, or as a failure if it is invalid.
 
         Args:
             run: The run to update.
             job_id: Which job the response is for.
             message: The API response.
-            prompt_hash: Hash of the prompt that produced the response; None for the current one.
+            prompt_hash: Hash of the prompt that produced the response.
         """
         try:
-            run.scores.append(self._to_score(job_id, message, prompt_hash or self.prompt_hash))
+            run.scores.append(self._to_score(job_id, message, prompt_hash))
         except ValueError as e:
             run.failed.append((job_id, str(e)))
 
