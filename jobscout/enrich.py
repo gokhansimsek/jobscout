@@ -91,7 +91,8 @@ def enrich(
     """Fetch and save details for jobs in the store that have none.
 
     A removed job (404) is saved with the email's data and an empty description,
-    so it is not requested again.
+    so it is not requested again. A page with no description (e.g. a login wall)
+    is a failure, so the job is retried next run.
 
     Args:
         store: Where jobs are read from and details are saved.
@@ -129,6 +130,11 @@ def enrich(
             continue
         else:
             details = _parse_job_page(ref, html)
+            if not details.description:
+                # A login wall or changed layout, not the job page: saving it would
+                # cache an empty description forever.
+                result.failed.append((ref.job_id, "no job description on page"))
+                continue
 
         store.save_details(details)
         result.fetched.append(details)

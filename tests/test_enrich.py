@@ -69,6 +69,18 @@ def test_blocking_stops_the_run_and_saves_nothing_more(store):
     assert [r.job_id for r in store.needing_details()] == ["2", "3"]
 
 
+def test_page_without_description_is_retried_not_saved(store):
+    seed(store, 2)
+    login_wall = "<html><body><h1>Sign in to view this job</h1></body></html>"
+    get = FakeGet({"1": (200, login_wall), "2": (200, job_page_html("A", "B", "C"))})
+
+    result = enrich(store, get=get, sleep=lambda s: None)
+
+    assert result.failed == [("1", "no job description on page")]
+    assert [d.job_id for d in result.fetched] == ["2"]
+    assert [r.job_id for r in store.needing_details()] == ["1"]
+
+
 def test_network_error_skips_job_and_continues(store):
     seed(store, 2)
     get = FakeGet({"1": FetchError("timeout"), "2": (200, job_page_html("A", "B", "C"))})
