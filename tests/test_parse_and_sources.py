@@ -1,18 +1,37 @@
 import hashlib
+from datetime import UTC, datetime
 from email.message import EmailMessage
 
 import pytest
+import requests
 from conftest import alert_html
 
 from jobscout.parse import parse_alert_html
-from jobscout.sources import ALERT_SENDER, AlertSourceError, FolderSource, GraphSource
+from jobscout.sources import (
+    ALERT_SENDER,
+    DEFAULT_RETRY_AFTER,
+    AlertSourceError,
+    FolderSource,
+    GraphResponse,
+    GraphSource,
+    graph_getter,
+    retry_after_seconds,
+)
 
 
-def graph_page(*msg_ids: str, next_link: str | None = None) -> tuple[int, None, dict]:
+def graph_page(*msg_ids: str, next_link: str | None = None) -> GraphResponse:
     page: dict = {"value": [{"id": m, "body": {"content": f"<p>{m}</p>"}} for m in msg_ids]}
     if next_link:
         page["@odata.nextLink"] = next_link
-    return 200, None, page
+    return GraphResponse(200, None, page)
+
+
+def http_response(status: int, body: bytes, headers: dict[str, str] | None = None):
+    resp = requests.Response()
+    resp.status_code = status
+    resp._content = body
+    resp.headers.update(headers or {})
+    return resp
 
 
 class FakeGraph:
@@ -93,3 +112,45 @@ def test_graph_error_status_becomes_alert_source_error():
 
     with pytest.raises(AlertSourceError, match="HTTP 503"):
         list(GraphSource(get=get, sleep=lambda s: None).alerts())
+
+
+@pytest.mark.parametrize(
+    "header, seconds",
+    [
+        ("7", 7),
+        ("Tue, 29 Sep 2026 12:00:30 GMT", 30),  # HTTP-date form
+        ("Tue, 29 Sep 2026 11:00:00 GMT", 0),  # already past
+        ("soon", DEFAULT_RETRY_AFTER),
+        (None, DEFAULT_RETRY_AFTER),
+    ],
+)
+def test_retry_after_accepts_seconds_or_http_date(header, seconds):
+    now = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
+
+    assert retry_after_seconds(header, now) == seconds
+
+
+def test_graph_getter_turns_network_failure_into_alert_source_error(monkeypatch):
+    def fail(self, url, **kwargs):
+        raise requests.ConnectionError("DNS failure")
+
+    monkeypatch.setattr(requests.Session, "get", fail)
+
+    with pytest.raises(AlertSourceError, match="unreachable"):
+        graph_getter(lambda: "token")("https://graph", None)
+
+
+def test_graph_getter_turns_unreadable_page_into_alert_source_error(monkeypatch):
+    monkeypatch.setattr(
+        requests.Session, "get", lambda self, url, **kw: http_response(200, b"<html>")
+    )
+
+    with pytest.raises(AlertSourceError, match="unreadable"):
+        graph_getter(lambda: "token")("https://graph", None)
+
+
+def test_graph_getter_reads_retry_after_on_throttling(monkeypatch):
+    throttled = http_response(429, b"", {"Retry-After": "5"})
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kw: throttled)
+
+    assert graph_getter(lambda: "token")("https://graph", None) == GraphResponse(429, 5, {})

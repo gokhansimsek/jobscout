@@ -15,8 +15,9 @@ from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from email import policy
 from email.message import EmailMessage
+from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, NamedTuple, Protocol, cast
 
 import extract_msg
 import msal
@@ -124,11 +125,26 @@ GRAPH_MESSAGES = "https://graph.microsoft.com/v1.0/me/messages"
 
 
 MAX_GRAPH_ATTEMPTS = 5
+DEFAULT_RETRY_AFTER = 10  # seconds, when a 429 has no usable Retry-After header
 
-# (url, params) -> (status, retry_after_seconds, page). page is the decoded JSON body
-# for 2xx and {} otherwise; retry_after is only set for 429. Raises AlertSourceError
-# on network failure.
-GraphGetter = Callable[[str, dict[str, str] | None], tuple[int, int | None, dict]]
+
+class GraphResponse(NamedTuple):
+    """One Graph page request, as the Graph adapter needs it.
+
+    Attributes:
+        status: HTTP status code.
+        retry_after: Seconds to wait before retrying; set only for 429.
+        page: The decoded JSON body for 2xx, {} otherwise.
+    """
+
+    status: int
+    retry_after: int | None
+    page: dict
+
+
+# (url, params) -> GraphResponse. Raises AlertSourceError on network failure or an
+# unreadable body.
+GraphGetter = Callable[[str, dict[str, str] | None], GraphResponse]
 
 
 class LoginRequired(RuntimeError):
@@ -187,6 +203,32 @@ def get_token(interactive: bool = False) -> str:
     return result["access_token"]
 
 
+def retry_after_seconds(header: str | None, now: datetime | None = None) -> int:
+    """Read a Retry-After header, which may be seconds or an HTTP date.
+
+    Args:
+        header: The header value, or None if absent.
+        now: Current time, for HTTP dates; defaults to the clock.
+
+    Returns:
+        Seconds to wait, never negative; DEFAULT_RETRY_AFTER if the header is
+        missing or unreadable.
+    """
+    if header is None:
+        return DEFAULT_RETRY_AFTER
+    try:
+        return max(0, int(header))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(header)
+    except TypeError, ValueError:
+        return DEFAULT_RETRY_AFTER
+    if when.tzinfo is None:
+        return DEFAULT_RETRY_AFTER
+    return max(0, int((when - (now or datetime.now(UTC))).total_seconds()))
+
+
 def graph_getter(token_provider: Callable[[], str] = get_token) -> GraphGetter:
     """Build the production Graph getter: one signed-in requests session.
 
@@ -207,7 +249,7 @@ def graph_getter(token_provider: Callable[[], str] = get_token) -> GraphGetter:
         }
     )
 
-    def get(url: str, params: dict[str, str] | None) -> tuple[int, int | None, dict]:
+    def get(url: str, params: dict[str, str] | None) -> GraphResponse:
         """GET one Graph page.
 
         Args:
@@ -215,19 +257,24 @@ def graph_getter(token_provider: Callable[[], str] = get_token) -> GraphGetter:
             params: Query parameters, or None when the URL already has them.
 
         Returns:
-            The HTTP status, the Retry-After seconds for a 429, and the decoded page.
+            The status, the Retry-After seconds for a 429, and the decoded page.
 
         Raises:
-            AlertSourceError: On any network-level failure.
+            AlertSourceError: On a network failure or a success body that isn't JSON.
         """
         try:
             resp = session.get(url, params=params, timeout=30)
+            page = resp.json() if resp.ok else {}
+        except requests.JSONDecodeError as e:
+            raise AlertSourceError(f"Graph sent an unreadable page: {e}") from e
         except requests.RequestException as e:
             raise AlertSourceError(f"Graph unreachable: {e}") from e
         retry_after = (
-            int(resp.headers.get("Retry-After", "10")) if resp.status_code == 429 else None
+            retry_after_seconds(resp.headers.get("Retry-After"))
+            if resp.status_code == 429
+            else None
         )
-        return resp.status_code, retry_after, resp.json() if resp.ok else {}
+        return GraphResponse(resp.status_code, retry_after, page)
 
     return get
 
@@ -300,7 +347,7 @@ class GraphSource:
         for _ in range(MAX_GRAPH_ATTEMPTS):
             status, retry_after, page = get(url, params)
             if status == 429:
-                self._sleep(retry_after or 10)
+                self._sleep(DEFAULT_RETRY_AFTER if retry_after is None else retry_after)
                 continue
             if status >= 400:
                 raise AlertSourceError(f"Graph returned HTTP {status}")

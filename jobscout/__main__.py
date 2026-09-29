@@ -45,10 +45,14 @@ def cmd_fetch(store: JobStore, days: int) -> bool:
     Returns:
         False if Outlook sign-in is needed or the mailbox could not be read, True otherwise.
     """
+    new = 0
     try:
-        new = sum(store.add_alert(a) for a in GraphSource(days).alerts())
+        for alert in GraphSource(days).alerts():
+            new += store.add_alert(alert)
     except (LoginRequired, AlertSourceError) as e:
         print(f"  ! {e}", file=sys.stderr)
+        if new:
+            print(f"{new} new alert emails saved before the failure")
         return False
     print(f"{new} new alert emails")
     return True
