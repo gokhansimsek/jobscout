@@ -6,10 +6,10 @@
     "semantic_hash": "4b24212901161c8a158d0eda0d1fc08b"
   },
   "jobscout/__main__.py": {
-    "mtime": 1790687643.2825935,
-    "seen": 1790691918.584248,
-    "ast_hash": "75df3921e1a2c0904cc86ba69ee49744",
-    "semantic_hash": "75df3921e1a2c0904cc86ba69ee49744"
+    "mtime": 1790711543.6380029,
+    "seen": 1790711942.1044035,
+    "ast_hash": "df357b8015872c29bf4363096fb4d9dd",
+    "semantic_hash": "df357b8015872c29bf4363096fb4d9dd"
   },
   "jobscout/config.py": {
     "mtime": 1790685672.6506462,
@@ -18,10 +18,10 @@
     "semantic_hash": "ccdb47ffcb5d4b9b69e3c737f29bd80e"
   },
   "jobscout/enrich.py": {
-    "mtime": 1790685783.3926418,
-    "seen": 1790691918.5842512,
-    "ast_hash": "bcfe653e2724315cc25eb9ab70474b85",
-    "semantic_hash": "bcfe653e2724315cc25eb9ab70474b85"
+    "mtime": 1790699345.4560387,
+    "seen": 1790711942.104409,
+    "ast_hash": "f01ff3fe28629b7899b7f87a810f4b80",
+    "semantic_hash": "f01ff3fe28629b7899b7f87a810f4b80"
   },
   "jobscout/models.py": {
     "mtime": 1790685779.2471187,
@@ -42,22 +42,22 @@
     "semantic_hash": "f12d2f837c2ea6028eb79af335b8ed50"
   },
   "jobscout/score.py": {
-    "mtime": 1790685784.423216,
-    "seen": 1790691918.5842552,
-    "ast_hash": "bbd2081375e48473e82cf64652b3fd0f",
-    "semantic_hash": "bbd2081375e48473e82cf64652b3fd0f"
+    "mtime": 1790711606.4155433,
+    "seen": 1790711942.104415,
+    "ast_hash": "886f847bbf9e43935089812141e420fd",
+    "semantic_hash": "886f847bbf9e43935089812141e420fd"
   },
   "jobscout/sources.py": {
-    "mtime": 1790687613.5276825,
-    "seen": 1790691918.5842562,
-    "ast_hash": "ccb61a03d9b024ad188127a13c4545c4",
-    "semantic_hash": "ccb61a03d9b024ad188127a13c4545c4"
+    "mtime": 1790711606.4155433,
+    "seen": 1790711942.104416,
+    "ast_hash": "0b9210cdb9184d27d26cd053f5c174f0",
+    "semantic_hash": "0b9210cdb9184d27d26cd053f5c174f0"
   },
   "jobscout/store.py": {
-    "mtime": 1790685782.358409,
-    "seen": 1790691918.5842571,
-    "ast_hash": "9ed5074c2ab034a0745498d38c095e64",
-    "semantic_hash": "9ed5074c2ab034a0745498d38c095e64"
+    "mtime": 1790711548.6939526,
+    "seen": 1790711942.104417,
+    "ast_hash": "5d8b8e1951842576ec8c4a48873106c8",
+    "semantic_hash": "5d8b8e1951842576ec8c4a48873106c8"
   },
   "pyproject.toml": {
     "mtime": 1790685591.9678807,
@@ -72,28 +72,28 @@
     "semantic_hash": "20dcd5ac2f3cfdb6e80a000e73593ec4"
   },
   "tests/test_enrich.py": {
-    "mtime": 1790685593.2547064,
-    "seen": 1790691918.58426,
-    "ast_hash": "334c662593959475d1154d0f4ceb4115",
-    "semantic_hash": "334c662593959475d1154d0f4ceb4115"
+    "mtime": 1790699334.4852767,
+    "seen": 1790711942.1044207,
+    "ast_hash": "b308bda4477e24bc6ed89c7acbe68c85",
+    "semantic_hash": "b308bda4477e24bc6ed89c7acbe68c85"
   },
   "tests/test_parse_and_sources.py": {
-    "mtime": 1790685573.1730783,
-    "seen": 1790691918.5842612,
-    "ast_hash": "6ee229ad9608b7047ec7b30f10f586fe",
-    "semantic_hash": "6ee229ad9608b7047ec7b30f10f586fe"
+    "mtime": 1790711606.4155433,
+    "seen": 1790711942.1044216,
+    "ast_hash": "3df73e69b8c5e3cc8724dfc4e1ae6539",
+    "semantic_hash": "3df73e69b8c5e3cc8724dfc4e1ae6539"
   },
   "tests/test_score.py": {
-    "mtime": 1790685817.161648,
-    "seen": 1790691918.5842621,
-    "ast_hash": "a77899f7d0d3f0d03f1f0db3d409b292",
-    "semantic_hash": "a77899f7d0d3f0d03f1f0db3d409b292"
+    "mtime": 1790711584.3689692,
+    "seen": 1790711942.1044226,
+    "ast_hash": "ad3a1ba2a262353dd2685c9a87f9bd18",
+    "semantic_hash": "ad3a1ba2a262353dd2685c9a87f9bd18"
   },
   "tests/test_store.py": {
-    "mtime": 1790685593.2567036,
-    "seen": 1790691918.5842628,
-    "ast_hash": "b71d1dac845cdbe0bbaed4891320f835",
-    "semantic_hash": "b71d1dac845cdbe0bbaed4891320f835"
+    "mtime": 1790711585.4132602,
+    "seen": 1790711942.104424,
+    "ast_hash": "87aef1eeb2c5b2e8b7109011bbb0fd0d",
+    "semantic_hash": "87aef1eeb2c5b2e8b7109011bbb0fd0d"
   },
   "CONTEXT.md": {
     "mtime": 1790685129.2601843,
@@ -102,10 +102,10 @@
     "semantic_hash": "10b25c1cc2d4e0b6ec24de7275c3930c"
   },
   "README.md": {
-    "mtime": 1790688291.1895773,
-    "seen": 1790691918.5842648,
-    "ast_hash": "5953ff91159b8a65c112d8d7aa8cf544",
-    "semantic_hash": "5953ff91159b8a65c112d8d7aa8cf544"
+    "mtime": 1790710453.3179138,
+    "seen": 1790711942.1044264,
+    "ast_hash": "2edaac691f476de9579a009da8a7fa88",
+    "semantic_hash": "2edaac691f476de9579a009da8a7fa88"
   },
   "data/rubric.md": {
     "mtime": 1790687349.3672106,
@@ -118,5 +118,11 @@
     "seen": 1790691918.584267,
     "ast_hash": "a71f05a2cec456055cbcd9be83c8c703",
     "semantic_hash": "a71f05a2cec456055cbcd9be83c8c703"
+  },
+  "docs/adr/0001-job-store-reads-inbox-through-folder-source.md": {
+    "mtime": 1790710989.9146175,
+    "seen": 1790711942.1044292,
+    "ast_hash": "7127750b73262ec115048e53721be162",
+    "semantic_hash": "7127750b73262ec115048e53721be162"
   }
 }
