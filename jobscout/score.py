@@ -230,7 +230,10 @@ class Scorer:
         """
         if batch:
             batch_obj = self._client.messages.batches.create(
-                requests=[Request(custom_id=job.job_id, params=self._params(job)) for job in jobs]
+                requests=[
+                    Request(custom_id=f"{job.job_id}-{self.prompt_hash}", params=self._params(job))
+                    for job in jobs
+                ]
             )
             if on_submit:
                 on_submit(batch_obj.id)
@@ -261,11 +264,16 @@ class Scorer:
         run = ScoreRun(Usage(self._profile.price, discount=0.5), batch_id=batch_id)
         # Results come back in any order: key by custom_id, never by position.
         for result in self._client.messages.batches.results(batch_id):
+            # Stamp the hash the batch was submitted with, not the current one: if the
+            # CV or rubric changed since, these scores are stale and must stay so.
+            job_id, sep, prompt_hash = result.custom_id.rpartition("-")
+            if not sep:  # submitted before custom_id carried the hash
+                job_id, prompt_hash = result.custom_id, self.prompt_hash
             if result.result.type != "succeeded":
-                run.failed.append((result.custom_id, result.result.type))
+                run.failed.append((job_id, result.result.type))
                 continue
             run.usage.add(result.result.message.usage)
-            self._record(run, result.custom_id, result.result.message)
+            self._record(run, job_id, result.result.message, prompt_hash)
         return run
 
     # --- implementation -----------------------------------------------------------
@@ -307,28 +315,32 @@ class Scorer:
             "extra_body": {"fallbacks": "default"},
         }
 
-    def _record(self, run: ScoreRun, job_id: str, message: Message) -> None:
+    def _record(
+        self, run: ScoreRun, job_id: str, message: Message, prompt_hash: str | None = None
+    ) -> None:
         """Add a response to the run as a score, or as a failure if it is invalid.
 
         Args:
             run: The run to update.
             job_id: Which job the response is for.
             message: The API response.
+            prompt_hash: Hash of the prompt that produced the response; None for the current one.
         """
         try:
-            run.scores.append(self._to_score(job_id, message))
+            run.scores.append(self._to_score(job_id, message, prompt_hash or self.prompt_hash))
         except ValueError as e:
             run.failed.append((job_id, str(e)))
 
-    def _to_score(self, job_id: str, message: Message) -> JobScore:
+    def _to_score(self, job_id: str, message: Message, prompt_hash: str) -> JobScore:
         """Validate a response and turn it into a JobScore.
 
         Args:
             job_id: Which job the response is for.
             message: The API response.
+            prompt_hash: Hash of the prompt that produced the response.
 
         Returns:
-            The score, stamped with the current prompt hash.
+            The score, stamped with ``prompt_hash``.
 
         Raises:
             ValueError: If the model refused, was cut off, or returned invalid output.
@@ -346,7 +358,7 @@ class Scorer:
             raise ValueError(f"invalid JSON: {e}") from e
         if not 0 <= data.get("score", -1) <= 10:
             raise ValueError(f"score out of range: {data.get('score')}")
-        return JobScore(job_id=job_id, prompt_hash=self.prompt_hash, **data)
+        return JobScore(job_id=job_id, prompt_hash=prompt_hash, **data)
 
 
 def _format_job(job: JobDetails) -> str:

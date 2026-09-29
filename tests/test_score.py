@@ -1,12 +1,18 @@
 import json
 from types import SimpleNamespace as NS
 
+import anthropic
+import httpx2
 import pytest
 
 from jobscout.models import JobDetails
 from jobscout.score import Scorer
 
 JOB = JobDetails("1", "Senior Backend", "Acme", "İzmir", "Python, FastAPI, AWS")
+JOB2 = JobDetails("2", "Data Engineer", "Beta", "Remote", "Python, Spark")
+CONNECTION_ERROR = anthropic.APIConnectionError(
+    request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+)
 GOOD = {
     "score": 9,
     "verdict": "apply",
@@ -33,12 +39,17 @@ def message(payload=GOOD, stop_reason="end_turn"):
 
 
 class FakeClient:
-    """Stands in for anthropic.Anthropic at the Scorer's seam."""
+    """Stands in for anthropic.Anthropic at the Scorer's seam.
 
-    def __init__(self, *responses, batch_polls: int = 0):
+    Responses are consumed in order. An exception is raised instead of returned;
+    in batch results, a string is a non-succeeded result type (e.g. "expired").
+    """
+
+    def __init__(self, *responses, batch_polls: int = 0, reverse_results: bool = False):
         self.responses = list(responses)
         self.calls: list[dict] = []
         self.polls_left = batch_polls
+        self.reverse_results = reverse_results
         self.messages = NS(
             create=self._create,
             batches=NS(
@@ -50,7 +61,10 @@ class FakeClient:
 
     def _create(self, **kwargs):
         self.calls.append(kwargs)
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
     def _batch_create(self, requests):
         self.batch_requests = requests
@@ -61,12 +75,19 @@ class FakeClient:
         return NS(processing_status="ended" if self.polls_left < 0 else "in_progress")
 
     def _results(self, batch_id):
+        # Pair each request with its response in submission order, then optionally
+        # reverse: the real API returns results in any order.
+        pairs = [(r["custom_id"], self.responses.pop(0)) for r in self.batch_requests]
+        if self.reverse_results:
+            pairs.reverse()
         return [
             NS(
-                custom_id=r["custom_id"],
-                result=NS(type="succeeded", message=self.responses.pop(0)),
+                custom_id=custom_id,
+                result=NS(type=response)
+                if isinstance(response, str)
+                else NS(type="succeeded", message=response),
             )
-            for r in self.batch_requests
+            for custom_id, response in pairs
         ]
 
 
@@ -142,3 +163,55 @@ def test_batch_polls_until_ended_and_halves_cost():
     assert run.scores[0].job_id == "1"
     assert "fallbacks" not in client.batch_requests[0]["params"]  # rejected by the Batch API
     assert run.usage.cost == pytest.approx((2000 + 2000 + 600) / 1e6 / 2)
+
+
+def test_api_errors_become_failures_and_the_run_continues():
+    run = scorer(FakeClient(CONNECTION_ERROR, message())).score([JOB, JOB2])
+
+    assert run.failed == [("1", "Connection error.")]
+    assert [s.job_id for s in run.scores] == ["2"]
+
+
+def test_batch_results_are_matched_by_custom_id_not_position():
+    client = FakeClient(
+        message({**GOOD, "score": 9}), message({**GOOD, "score": 3}), reverse_results=True
+    )
+
+    run = scorer(client).score([JOB, JOB2], batch=True)
+
+    assert {s.job_id: s.score for s in run.scores} == {"1": 9, "2": 3}
+
+
+def test_unsuccessful_batch_results_become_failures():
+    run = scorer(FakeClient("expired", message())).score([JOB, JOB2], batch=True)
+
+    assert run.failed == [("1", "expired")]
+    assert [s.job_id for s in run.scores] == ["2"]
+    assert run.usage.cost == pytest.approx((2000 + 2000 + 600) / 1e6 / 2)  # only job 2 billed
+
+
+def test_interrupted_batch_can_be_collected_by_a_new_scorer():
+    client = FakeClient(message())
+
+    def interrupt(batch_id):
+        raise KeyboardInterrupt  # the user stops waiting right after submission
+
+    with pytest.raises(KeyboardInterrupt):
+        scorer(client).score([JOB], batch=True, on_submit=interrupt)
+    run = scorer(client).collect("batch_1")
+
+    assert run.batch_id == "batch_1"
+    assert [s.job_id for s in run.scores] == ["1"]
+
+
+def test_collected_scores_keep_the_hash_they_were_submitted_with():
+    client = FakeClient(message())
+    submitter = scorer(client, rubric="Senior Python only")
+    submitter.score([JOB], batch=True, on_submit=lambda batch_id: None)
+    client.responses.append(message())  # the same batch, collected again
+
+    # The rubric was edited before resuming: these scores came from the old prompt.
+    run = scorer(client, rubric="Remote only").collect("batch_1")
+
+    assert run.scores[0].job_id == "1"
+    assert run.scores[0].prompt_hash == submitter.prompt_hash
