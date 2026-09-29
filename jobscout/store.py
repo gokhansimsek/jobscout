@@ -11,7 +11,7 @@ Callers ask questions ("which jobs need a score?") and never touch paths.
 """
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pathlib import Path
 
 from jobscout.config import DATA_DIR
@@ -75,7 +75,7 @@ class JobStore:
         Returns:
             Jobs without JobDetails, in first-seen order.
         """
-        return [ref for ref in self._refs() if not (self._details / f"{ref.job_id}.json").exists()]
+        return [job.ref for job in self.jobs() if job.details is None]
 
     def needing_score(self, prompt_hash: str) -> list[JobDetails]:
         """List jobs that have details but no score from the current prompt.
@@ -125,8 +125,12 @@ class JobStore:
         return list(refs.values())
 
     @staticmethod
-    def _read[T](folder: Path, job_id: str, cls: type[T]) -> T | None:
-        """Load one job's JSON record.
+    def _read[T: (JobDetails, JobScore)](folder: Path, job_id: str, cls: type[T]) -> T | None:
+        """Load one job's JSON record, tolerating records written by an older version.
+
+        Fields the class no longer has are ignored and new fields take their defaults.
+        A record that still cannot be built counts as missing, so the job is fetched or
+        scored again rather than breaking every command.
 
         Args:
             folder: Folder holding ``<job_id>.json`` files.
@@ -134,12 +138,17 @@ class JobStore:
             cls: Dataclass to build from the JSON.
 
         Returns:
-            The record, or None if the job has none.
+            The record, or None if the job has none or it is unreadable.
         """
         path = folder / f"{job_id}.json"
         if not path.exists():
             return None
-        return cls(**json.loads(path.read_text(encoding="utf-8")))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            names = {f.name for f in fields(cls)}
+            return cls(**{k: v for k, v in data.items() if k in names})
+        except json.JSONDecodeError, TypeError:
+            return None
 
     @staticmethod
     def _write(folder: Path, job_id: str, obj: JobDetails | JobScore) -> None:

@@ -1,3 +1,5 @@
+import json
+
 from conftest import alert_html
 
 from jobscout.models import Alert, JobDetails, JobScore
@@ -50,3 +52,21 @@ def test_needing_details_and_needing_score(store):
     assert [r.job_id for r in store.needing_details()] == ["4"]
     # 1 is up to date, 2 is stale, 3 is unscored, 4 has no details yet
     assert [d.job_id for d in store.needing_score("current")] == ["2", "3"]
+
+
+def test_records_from_an_older_shape_load_or_count_as_missing(store, tmp_path):
+    store.add_alert(Alert("a", alert_html(*[(i, "T", "C", "L") for i in "123"])))
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "scores").mkdir()
+    # 1: a field since removed is ignored; 2: a required field is missing; 3: not JSON.
+    (tmp_path / "jobs" / "1.json").write_text(
+        json.dumps({**details("1").__dict__, "removed_field": "x"}), encoding="utf-8"
+    )
+    (tmp_path / "jobs" / "2.json").write_text(json.dumps({"job_id": "2"}), encoding="utf-8")
+    (tmp_path / "scores" / "3.json").write_text("{truncated", encoding="utf-8")
+
+    j1, j2, j3 = store.jobs()
+
+    assert j1.details == details("1")
+    assert j2.details is None and [r.job_id for r in store.needing_details()] == ["2", "3"]
+    assert j3.score is None  # scored again

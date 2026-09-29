@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from types import SimpleNamespace as NS
 
@@ -5,8 +6,8 @@ import anthropic
 import httpx2
 import pytest
 
-from jobscout.models import JobDetails
-from jobscout.score import Scorer
+from jobscout.models import JobDetails, JobScore
+from jobscout.score import SCORE_SCHEMA, Scorer
 
 JOB = JobDetails("1", "Senior Backend", "Acme", "İzmir", "Python, FastAPI, AWS")
 JOB2 = JobDetails("2", "Data Engineer", "Beta", "Remote", "Python, Spark")
@@ -93,6 +94,14 @@ class FakeClient:
 
 def scorer(client, model="claude-sonnet-5-5", rubric="Senior Python only", sleep=lambda s: None):
     return Scorer(client, cv="Python dev, 15 years", rubric=rubric, model=model, sleep=sleep)
+
+
+def test_score_schema_matches_jobscore_fields():
+    # The model fills everything except what the Scorer stamps on itself.
+    fields = {f.name for f in dataclasses.fields(JobScore)} - {"job_id", "prompt_hash"}
+
+    assert set(SCORE_SCHEMA["properties"]) == fields
+    assert set(SCORE_SCHEMA["required"]) == fields
 
 
 def test_scores_are_validated_stamped_and_costed():
