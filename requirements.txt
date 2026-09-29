@@ -1,0 +1,6 @@
+anthropic
+beautifulsoup4
+extract-msg
+msal
+python-dotenv
+requests

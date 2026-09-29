@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.env
+# MSAL refresh token = access to your mailbox. Treat like a password.
+.token_cache.json
+# personal data: emails contain auth tokens in links, CV contains personal info
+data/
