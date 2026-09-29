@@ -2,8 +2,19 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+
+# --- secrets ---
 .env
 # MSAL refresh token = access to your mailbox. Treat like a password.
 .token_cache.json
-# personal data: emails contain auth tokens in links, CV contains personal info
-data/
+
+# --- personal data (data/rubric.md is tracked on purpose) ---
+data/cv.md
+# alert emails: links carry LinkedIn auth tokens
+data/emails/
+data/samples/
+
+# --- generated per run: CV-derived judgments and cached pages ---
+data/jobs/
+data/scores/
+data/report.md
